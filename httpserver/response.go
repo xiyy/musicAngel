@@ -18,6 +18,9 @@ const (
 	STATUS_ACCOUNT_HAS_EXITED = -5006
 	STATUS_DATA_PARAM_ILLEGAL = -5007
 	STATUS_DATE_IS_NULL       = -5008
+	STATUS_APP_ID_IS_ILLEGAL  = -5009
+	STATUS_TOKEN_ILLEGAL      = -5010
+	STATUS_TOKEN_EXPIRES      = -5011
 )
 
 var statusText = map[int]string{
@@ -30,6 +33,9 @@ var statusText = map[int]string{
 	STATUS_ACCOUNT_HAS_EXITED: "Account Has Exited",
 	STATUS_DATA_PARAM_ILLEGAL: "Param Is Illegal",
 	STATUS_DATE_IS_NULL:       "Data Is Null",
+	STATUS_APP_ID_IS_ILLEGAL:  "AppId Is Illegal",
+	STATUS_TOKEN_ILLEGAL:      "Token Illegal",
+	STATUS_TOKEN_EXPIRES:      "Token Expires",
 }
 
 func StatusText(code int) string {
@@ -42,11 +48,7 @@ func StatusText(code int) string {
 2、Response所有属性后面要有json的key名称，否者也会解析失败
 */
 
-func (resp *Response) jsonString() (error, []byte) {
+func (resp *Response) ObjToBytes() (error, []byte) {
 	bytes, err := json.Marshal(resp)
 	return err, bytes
-}
-
-func (resp *Response) jsonError() []byte {
-	return []byte("{\"code\": -5002,\"msg\": \"Json Error\",\"data\": \"\"}")
 }

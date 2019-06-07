@@ -2,9 +2,9 @@ package database
 
 import (
 	"database/sql"
-	"encoding/json"
 	"log"
 	"musicAngel/bean"
+	"musicAngel/config"
 )
 
 type DbManager struct {
@@ -14,7 +14,7 @@ type DbManager struct {
 func (dbManager *DbManager) Close() {
 	dbManager.Db.Close()
 }
-func (dbManager *DbManager) QuerySongList() (error, []byte) {
+func (dbManager *DbManager) QuerySongList() (error, []*bean.SongInfo) {
 	rows, err := dbManager.Db.Query("select * from songinfo")
 	if err != nil {
 		return err, nil
@@ -35,16 +35,12 @@ func (dbManager *DbManager) QuerySongList() (error, []byte) {
 	}
 	if songInfoList != nil {
 		log.Println("songInfoList size:", len(songInfoList))
-		content, err := json.Marshal(songInfoList)
-		if err != nil {
-			return err, nil
-		}
-		return nil, content
+		return nil, songInfoList
 	}
 	return nil, nil
 }
 
-func (dbManager *DbManager) QuerySongsBySinger(singer string) (error, []byte) {
+func (dbManager *DbManager) QuerySongsBySinger(singer string) (error, []*bean.SongInfo) {
 	rows, err := dbManager.Db.Query("select * from songinfo where singer=?", singer)
 	if err != nil {
 		return err, nil
@@ -63,25 +59,17 @@ func (dbManager *DbManager) QuerySongsBySinger(singer string) (error, []byte) {
 			songInfoList = append(songInfoList, song)
 		}
 	}
-	if songInfoList != nil {
-		log.Println("songInfoList size:", len(songInfoList))
-		content, err := json.Marshal(songInfoList)
-		if err != nil {
-			return err, nil
-		}
-		return nil, content
-	}
-	return nil, nil
+	log.Println("songInfoList size:", len(songInfoList))
+	return nil, songInfoList
 }
 
-func (dbManager *DbManager) QuerySongBySongName(songName string) (error, []byte) {
+func (dbManager *DbManager) QuerySongBySongName(songName string) (error, []*bean.SongInfo) {
 	rows, err := dbManager.Db.Query("select * from songinfo where name=?", songName)
 	if err != nil {
 		return err, nil
 	}
 	defer rows.Close()
 	var songInfoList []*bean.SongInfo
-
 	for rows.Next() {
 		song := new(bean.SongInfo)
 		err = rows.Scan(&song.Id, &song.Music_id, &song.Mv_rid, &song.Name, &song.Song_url, &song.Artist, &song.Artid, &song.Singer, &song.Special, &song.Ridmd591, &song.Mp3size, &song.Artist_url, &song.Auther_url, &song.Playid, &song.Artist_pic, &song.Artist_pic240, &song.Path, &song.Mp3path, &song.Aacpath, &song.Wmadl, &song.Mp3dl, &song.Aacdl, &song.Lyric, &song.Lyric_zz, &song.Song_mp3_url)
@@ -93,15 +81,8 @@ func (dbManager *DbManager) QuerySongBySongName(songName string) (error, []byte)
 			songInfoList = append(songInfoList, song)
 		}
 	}
-	if songInfoList != nil {
-		log.Println("songInfoList size:", len(songInfoList))
-		content, err := json.Marshal(songInfoList)
-		if err != nil {
-			return err, nil
-		}
-		return nil, content
-	}
-	return nil, nil
+	log.Println("songInfoList size:", len(songInfoList))
+	return nil, songInfoList
 }
 
 func (dbManager *DbManager) IsAccountExits(accountName string) bool {
@@ -250,7 +231,7 @@ func (dbManager *DbManager) OperateFavoriteSongs(operateType int, songs []*bean.
 
 }
 
-func (dbManager *DbManager) QueryFavoriteSongsByUserId(userid string) ([]byte, error) {
+func (dbManager *DbManager) QueryFavoriteSongsByUserId(userid string) ([]*bean.FavoriteSong, error) {
 	rows, err := dbManager.Db.Query("select * from favorite where userid=?", userid)
 	if err != nil {
 		return nil, err
@@ -269,13 +250,32 @@ func (dbManager *DbManager) QueryFavoriteSongsByUserId(userid string) ([]byte, e
 			favoriteSongList = append(favoriteSongList, favoriteSong)
 		}
 	}
-	if favoriteSongList != nil {
-		log.Println("favoriteSongList size:", len(favoriteSongList))
-		content, err := json.Marshal(favoriteSongList)
-		if err != nil {
-			return nil, err
-		}
-		return content, nil
+	log.Println("favoriteSongList size:", len(favoriteSongList))
+	return favoriteSongList, nil
+}
+
+func (dbManager *DbManager) StoreToken(token, expireTime string) (error, bool) {
+	tx, err := dbManager.Db.Begin()
+	if err != nil {
+		return err, false
 	}
-	return nil, nil
+	var result sql.Result
+	result, err = tx.Exec("insert into token (appid,token,expiretime) values(?,?,?)", config.APP_ID, token, expireTime)
+	if err != nil {
+		return err, false
+	}
+	affectRows, _ := result.RowsAffected()
+	tx.Commit()
+	return nil, affectRows > 0
+}
+
+func (dbManager *DbManager) QueryToken(appid, token string) (error, *bean.Token) {
+	tokenValue := bean.Token{}
+	row := dbManager.Db.QueryRow("select token,expiretime from token where appid=? and token=?", appid, token)
+	err := row.Scan(&tokenValue.TokenValue, &tokenValue.Expire)
+	if err != nil {
+		return err, nil
+	}
+	log.Println(tokenValue.TokenValue, tokenValue.Expire)
+	return nil, &tokenValue
 }

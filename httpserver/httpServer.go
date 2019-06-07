@@ -6,10 +6,14 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"log"
 	"musicAngel/bean"
+	"musicAngel/config"
 	"musicAngel/database"
+	"musicAngel/encrypt"
+	"musicAngel/validate"
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type HttpServer struct {
@@ -25,6 +29,7 @@ const (
 	USER_UPDATE_USER_INFO = "/user/update"      //更新用户信息
 	FAVORITE_OPRATION     = "/favorite/operate" //添加或者取消收藏列表中某项歌曲
 	FAVORITE_LIST         = "/favorite/list"    //返回某个用户的收藏列表
+	TOKE_CREATE           = "/token/create"     //创建token
 )
 
 func NewHttpServer(dbManager *database.DbManager) *HttpServer {
@@ -32,6 +37,9 @@ func NewHttpServer(dbManager *database.DbManager) *HttpServer {
 }
 func (httpServer *HttpServer) Serve(listener net.Listener) error {
 	log.Println("start serving")
+	//注册路由。每收到一个请求，http包内部会启一个协成执行Func，在Func中做具体的业务逻辑。
+	// Func中如果只有数据库操作，不需要再启协成，操作完成直接返回。如果既有数据库操作，又有其他业务逻辑，数据库操作要放在单独的协成中执行，
+	// 其他耗时的任务也要放在单独的协成中执行，保证所有的耗时任务都是异步执行，节省时间
 	http.HandleFunc(SONG_LIST, httpServer.songList)
 	http.HandleFunc(SONG_SINGER, httpServer.songsBySinger)
 	http.HandleFunc(SONG_SONGNAME, httpServer.songBySongName)
@@ -39,6 +47,7 @@ func (httpServer *HttpServer) Serve(listener net.Listener) error {
 	http.HandleFunc(USER_UPDATE_USER_INFO, httpServer.updateUserInfo)
 	http.HandleFunc(FAVORITE_OPRATION, httpServer.favoriteOperate)
 	http.HandleFunc(FAVORITE_LIST, httpServer.favoriteList)
+	http.HandleFunc(TOKE_CREATE, httpServer.createToken)
 	return httpServer.server.Serve(listener)
 }
 
@@ -48,29 +57,103 @@ func (httpServer *HttpServer) Stop() {
 }
 
 /**
+支持post
+http://localhost/token/create
+{"app_id":"112233","app_secret":"QaD12&4l*WUPajk,anRM8Yz"}
+
+*/
+func (httpServer *HttpServer) createToken(w http.ResponseWriter, r *http.Request) {
+	resp := new(Response)
+	if r.Method == "POST" {
+		var appConfigParam bean.AppConfigParam
+		err := json.NewDecoder(r.Body).Decode(&appConfigParam)
+		if err != nil {
+			resp.Code = STATUS_DATA_PARAM_ILLEGAL
+			resp.Msg = StatusText(STATUS_DATA_PARAM_ILLEGAL)
+			resp.Data = ""
+		}
+		defer r.Body.Close()
+		if appConfigParam.AppId == config.APP_ID && appConfigParam.AppSecret == config.APP_SECRETE {
+			//appId+当前时间戳+appSecrete+token有效时间（一个小时）
+			currentTimeStamp := time.Now().Unix()
+			token := encrypt.Md5Encode(config.APP_ID + strconv.FormatInt(currentTimeStamp, 10) + config.APP_SECRETE + config.TOKEN_VALID_TIME)
+			expire := strconv.FormatInt(currentTimeStamp+3600, 10)
+			err, storeSuccess := httpServer.dbManager.StoreToken(token, expire)
+			if err != nil {
+				resp.Code = STATUS_DATABASE_ERROR
+				resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+				resp.Data = ""
+			} else {
+				if storeSuccess {
+					resp.Code = STATUS_OK
+					resp.Msg = StatusText(STATUS_OK)
+					resp.Data = &bean.Token{TokenValue: token, Expire: expire}
+				}
+			}
+		} else { //应用非法
+			resp.Code = STATUS_APP_ID_IS_ILLEGAL
+			resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+			resp.Data = ""
+		}
+	} else {
+		resp.Code = STATUS_METHOD_NOT_SUPPORT
+		resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
+		resp.Data = false
+	}
+	err, result := resp.ObjToBytes()
+	if err == nil {
+		w.Write(result)
+	}
+
+}
+
+/**
 支持get、post
 http://localhost/song/list
 
 */
 func (httpServer *HttpServer) songList(w http.ResponseWriter, r *http.Request) {
-	err, contentBytes := httpServer.dbManager.QuerySongList()
 	resp := new(Response)
-	if err != nil {
-		resp.Code = STATUS_DATABASE_ERROR
-		resp.Msg = StatusText(STATUS_DATABASE_ERROR)
-		resp.Data = ""
-	} else {
-		resp.Code = STATUS_OK
-		resp.Msg = StatusText(STATUS_OK)
-		resp.Data = string(contentBytes)
-	}
-	err, result := resp.jsonString()
+	err := validate.CheckRequest(httpServer.dbManager, r)
 	if err == nil {
-		w.Write(result)
+		err, songInfoList := httpServer.dbManager.QuerySongList()
+		if err != nil {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+		} else {
+			resp.Code = STATUS_OK
+			resp.Msg = StatusText(STATUS_OK)
+			resp.Data = songInfoList
+		}
 	} else {
-		w.Write(resp.jsonError())
+		v, ok := err.(*bean.Err)
+		if ok {
+			if v.Code == bean.Err_Token_Appid_Is_Illegal {
+				resp.Code = STATUS_APP_ID_IS_ILLEGAL
+				resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Illegal {
+				resp.Code = STATUS_TOKEN_ILLEGAL
+				resp.Msg = StatusText(STATUS_TOKEN_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Expired {
+				resp.Code = STATUS_TOKEN_EXPIRES
+				resp.Msg = StatusText(STATUS_TOKEN_EXPIRES)
+				resp.Data = ""
+			}
+		} else {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+
+		}
 	}
 
+	err, result := resp.ObjToBytes()
+	if err == nil {
+		w.Write(result)
+	}
 }
 
 /**
@@ -79,24 +162,54 @@ http://localhost/song/singer?singer=周杰伦
 http://localhost/song/singer?singer=王小田
 */
 func (httpServer *HttpServer) songsBySinger(w http.ResponseWriter, r *http.Request) {
-	params := r.URL.Query()
-	singer := params["singer"][0]
-	err, contentBytes := httpServer.dbManager.QuerySongsBySinger(singer)
 	resp := new(Response)
-	if err != nil {
-		resp.Code = STATUS_DATABASE_ERROR
-		resp.Msg = StatusText(STATUS_DATABASE_ERROR)
-		resp.Data = ""
+	err := validate.CheckRequest(httpServer.dbManager, r)
+	if err == nil {
+		params := r.URL.Query()
+		singer := params["singer"][0]
+		err, songInfoList := httpServer.dbManager.QuerySongsBySinger(singer)
+
+		if err != nil {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+		} else {
+			resp.Code = STATUS_OK
+			resp.Msg = StatusText(STATUS_OK)
+			if songInfoList == nil {
+				resp.Data = ""
+			} else {
+				resp.Data = songInfoList
+			}
+
+		}
 	} else {
-		resp.Code = STATUS_OK
-		resp.Msg = StatusText(STATUS_OK)
-		resp.Data = string(contentBytes)
+		v, ok := err.(*bean.Err)
+		if ok {
+			if v.Code == bean.Err_Token_Appid_Is_Illegal {
+				resp.Code = STATUS_APP_ID_IS_ILLEGAL
+				resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Illegal {
+				resp.Code = STATUS_TOKEN_ILLEGAL
+				resp.Msg = StatusText(STATUS_TOKEN_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Expired {
+				resp.Code = STATUS_TOKEN_EXPIRES
+				resp.Msg = StatusText(STATUS_TOKEN_EXPIRES)
+				resp.Data = ""
+			}
+		} else {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+
+		}
 	}
-	err, result := resp.jsonString()
+
+	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
-	} else {
-		w.Write(resp.jsonError())
 	}
 }
 
@@ -106,24 +219,53 @@ http://localhost/song/songname?songname=彩虹
 http://localhost/song/songname?songname=库中没有这首歌曲
 */
 func (httpServer *HttpServer) songBySongName(w http.ResponseWriter, r *http.Request) {
-	params := r.URL.Query()
-	songname := params["songname"][0]
-	err, contentBytes := httpServer.dbManager.QuerySongBySongName(songname)
 	resp := new(Response)
-	if err != nil {
-		resp.Code = STATUS_DATABASE_ERROR
-		resp.Msg = StatusText(STATUS_DATABASE_ERROR)
-		resp.Data = ""
+	err := validate.CheckRequest(httpServer.dbManager, r)
+	if err == nil {
+		params := r.URL.Query()
+		songname := params["songname"][0]
+		err, songInfoList := httpServer.dbManager.QuerySongBySongName(songname)
+
+		if err != nil {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+		} else {
+			resp.Code = STATUS_OK
+			resp.Msg = StatusText(STATUS_OK)
+			if songInfoList == nil {
+				resp.Data = ""
+			} else {
+				resp.Data = songInfoList
+			}
+		}
 	} else {
-		resp.Code = STATUS_OK
-		resp.Msg = StatusText(STATUS_OK)
-		resp.Data = string(contentBytes)
+		v, ok := err.(*bean.Err)
+		if ok {
+			if v.Code == bean.Err_Token_Appid_Is_Illegal {
+				resp.Code = STATUS_APP_ID_IS_ILLEGAL
+				resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Illegal {
+				resp.Code = STATUS_TOKEN_ILLEGAL
+				resp.Msg = StatusText(STATUS_TOKEN_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Expired {
+				resp.Code = STATUS_TOKEN_EXPIRES
+				resp.Msg = StatusText(STATUS_TOKEN_EXPIRES)
+				resp.Data = ""
+			}
+		} else {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+
+		}
 	}
-	err, result := resp.jsonString()
+
+	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
-	} else {
-		w.Write(resp.jsonError())
 	}
 
 }
@@ -136,48 +278,72 @@ http://localhost/user/register
 */
 func (httpServer *HttpServer) register(w http.ResponseWriter, r *http.Request) {
 	resp := new(Response)
-	if r.Method == "POST" {
-		var account bean.Account
-		err := json.NewDecoder(r.Body).Decode(&account)
-		defer r.Body.Close()
+	err := validate.CheckRequest(httpServer.dbManager, r)
+	if err == nil {
+		if r.Method == "POST" {
+			var account bean.Account
+			err := json.NewDecoder(r.Body).Decode(&account)
+			defer r.Body.Close()
 
-		if err != nil {
-			resp.Code = STATUS_JSON_DATA_ILLEGAL
-			resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
-			resp.Data = false
-		} else {
-			err, _ := httpServer.dbManager.Register(account)
 			if err != nil {
-				value, ok := err.(*bean.Err) //断言
-				if ok {
-					if value.Code == bean.Err_Account_Has_Exited {
-						resp.Code = STATUS_ACCOUNT_HAS_EXITED
-						resp.Msg = StatusText(STATUS_ACCOUNT_HAS_EXITED)
+				resp.Code = STATUS_JSON_DATA_ILLEGAL
+				resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
+				resp.Data = false
+			} else {
+				err, _ := httpServer.dbManager.Register(account)
+				if err != nil {
+					value, ok := err.(*bean.Err) //断言
+					if ok {
+						if value.Code == bean.Err_Account_Has_Exited {
+							resp.Code = STATUS_ACCOUNT_HAS_EXITED
+							resp.Msg = StatusText(STATUS_ACCOUNT_HAS_EXITED)
+							resp.Data = false
+						}
+					} else {
+						resp.Code = STATUS_DATABASE_ERROR
+						resp.Msg = StatusText(STATUS_DATABASE_ERROR)
 						resp.Data = false
 					}
+
 				} else {
-					resp.Code = STATUS_DATABASE_ERROR
-					resp.Msg = StatusText(STATUS_DATABASE_ERROR)
-					resp.Data = false
+					resp.Code = STATUS_OK
+					resp.Msg = StatusText(STATUS_OK)
+					resp.Data = true
 				}
-
-			} else {
-				resp.Code = STATUS_OK
-				resp.Msg = StatusText(STATUS_OK)
-				resp.Data = true
 			}
-		}
 
+		} else {
+			resp.Code = STATUS_METHOD_NOT_SUPPORT
+			resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
+			resp.Data = false
+		}
 	} else {
-		resp.Code = STATUS_METHOD_NOT_SUPPORT
-		resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
-		resp.Data = false
+		v, ok := err.(*bean.Err)
+		if ok {
+			if v.Code == bean.Err_Token_Appid_Is_Illegal {
+				resp.Code = STATUS_APP_ID_IS_ILLEGAL
+				resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Illegal {
+				resp.Code = STATUS_TOKEN_ILLEGAL
+				resp.Msg = StatusText(STATUS_TOKEN_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Expired {
+				resp.Code = STATUS_TOKEN_EXPIRES
+				resp.Msg = StatusText(STATUS_TOKEN_EXPIRES)
+				resp.Data = ""
+			}
+		} else {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+
+		}
 	}
-	err, result := resp.jsonString()
+
+	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
-	} else {
-		w.Write(resp.jsonError())
 	}
 
 }
@@ -189,52 +355,75 @@ http://localhost/user/update
 */
 func (httpServer *HttpServer) updateUserInfo(w http.ResponseWriter, r *http.Request) {
 	resp := new(Response)
-	if r.Method == "POST" {
-		var user bean.User
-		err := json.NewDecoder(r.Body).Decode(&user)
-		defer r.Body.Close()
-		if err != nil {
-			resp.Code = STATUS_JSON_DATA_ILLEGAL
-			resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
-			resp.Data = false
-		} else {
-			err, _ := httpServer.dbManager.UpdateUserInfo(user)
+	err := validate.CheckRequest(httpServer.dbManager, r)
+	if err == nil {
+		if r.Method == "POST" {
+			var user bean.User
+			err := json.NewDecoder(r.Body).Decode(&user)
+			defer r.Body.Close()
 			if err != nil {
-				value, ok := err.(*bean.Err) //断言
-				if ok {
-					if value.Code == bean.Err_Data_ILLEGAL {
-						resp.Code = STATUS_JSON_DATA_ILLEGAL
-						resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
-						resp.Data = false
-					}
-					if value.Code == bean.Err_Account_Not_Exit {
-						resp.Code = STATUS_ACCOUT_NOT_EXIT
-						resp.Msg = StatusText(STATUS_ACCOUT_NOT_EXIT)
-						resp.Data = false
-					}
-				} else {
-					resp.Code = STATUS_DATABASE_ERROR
-					resp.Msg = StatusText(STATUS_DATABASE_ERROR)
-					resp.Data = false
-				}
-
+				resp.Code = STATUS_JSON_DATA_ILLEGAL
+				resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
+				resp.Data = false
 			} else {
-				resp.Code = STATUS_OK
-				resp.Msg = StatusText(STATUS_OK)
-				resp.Data = true
+				err, _ := httpServer.dbManager.UpdateUserInfo(user)
+				if err != nil {
+					value, ok := err.(*bean.Err) //断言
+					if ok {
+						if value.Code == bean.Err_Data_ILLEGAL {
+							resp.Code = STATUS_JSON_DATA_ILLEGAL
+							resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
+							resp.Data = false
+						}
+						if value.Code == bean.Err_Account_Not_Exit {
+							resp.Code = STATUS_ACCOUT_NOT_EXIT
+							resp.Msg = StatusText(STATUS_ACCOUT_NOT_EXIT)
+							resp.Data = false
+						}
+					} else {
+						resp.Code = STATUS_DATABASE_ERROR
+						resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+						resp.Data = false
+					}
+
+				} else {
+					resp.Code = STATUS_OK
+					resp.Msg = StatusText(STATUS_OK)
+					resp.Data = true
+				}
 			}
+		} else {
+			resp.Code = STATUS_METHOD_NOT_SUPPORT
+			resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
+			resp.Data = false
 		}
 	} else {
-		resp.Code = STATUS_METHOD_NOT_SUPPORT
-		resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
-		resp.Data = false
+		v, ok := err.(*bean.Err)
+		if ok {
+			if v.Code == bean.Err_Token_Appid_Is_Illegal {
+				resp.Code = STATUS_APP_ID_IS_ILLEGAL
+				resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Illegal {
+				resp.Code = STATUS_TOKEN_ILLEGAL
+				resp.Msg = StatusText(STATUS_TOKEN_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Expired {
+				resp.Code = STATUS_TOKEN_EXPIRES
+				resp.Msg = StatusText(STATUS_TOKEN_EXPIRES)
+				resp.Data = ""
+			}
+		} else {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+
+		}
 	}
 
-	err, result := resp.jsonString()
+	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
-	} else {
-		w.Write(resp.jsonError())
 	}
 
 }
@@ -247,52 +436,76 @@ http://localhost/favorite/operate
 */
 func (httpServer *HttpServer) favoriteOperate(w http.ResponseWriter, r *http.Request) {
 	resp := new(Response)
-	if r.Method == "POST" {
-		var favoriteSongArray bean.FavoriteSongArray
-		err := json.NewDecoder(r.Body).Decode(&favoriteSongArray)
-		defer r.Body.Close()
-		if err != nil {
-			resp.Code = STATUS_JSON_DATA_ILLEGAL
-			resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
-			resp.Data = false
-		} else {
-			operateType := favoriteSongArray.OperateType
-			songArray := favoriteSongArray.SongArray
-			err, _ := httpServer.dbManager.OperateFavoriteSongs(operateType, songArray)
+	err := validate.CheckRequest(httpServer.dbManager, r)
+	if err == nil {
+		if r.Method == "POST" {
+			var favoriteSongArray bean.FavoriteSongArray
+			err := json.NewDecoder(r.Body).Decode(&favoriteSongArray)
+			defer r.Body.Close()
 			if err != nil {
-				value, ok := err.(*bean.Err) //断言
-				if ok {
-					if value.Code == bean.Err_Data_Param_Illegal {
-						resp.Code = STATUS_DATA_PARAM_ILLEGAL
-						resp.Msg = StatusText(STATUS_DATA_PARAM_ILLEGAL)
-						resp.Data = false
-					} else if value.Code == bean.Err_Data_Is_Null {
-						resp.Code = STATUS_DATE_IS_NULL
-						resp.Msg = StatusText(STATUS_DATE_IS_NULL)
+				resp.Code = STATUS_JSON_DATA_ILLEGAL
+				resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
+				resp.Data = false
+			} else {
+				operateType := favoriteSongArray.OperateType
+				songArray := favoriteSongArray.SongArray
+				err, _ := httpServer.dbManager.OperateFavoriteSongs(operateType, songArray)
+				if err != nil {
+					value, ok := err.(*bean.Err) //断言
+					if ok {
+						if value.Code == bean.Err_Data_Param_Illegal {
+							resp.Code = STATUS_DATA_PARAM_ILLEGAL
+							resp.Msg = StatusText(STATUS_DATA_PARAM_ILLEGAL)
+							resp.Data = false
+						} else if value.Code == bean.Err_Data_Is_Null {
+							resp.Code = STATUS_DATE_IS_NULL
+							resp.Msg = StatusText(STATUS_DATE_IS_NULL)
+							resp.Data = false
+						}
+
+					} else {
+						resp.Code = STATUS_DATABASE_ERROR
+						resp.Msg = StatusText(STATUS_DATABASE_ERROR)
 						resp.Data = false
 					}
-
 				} else {
-					resp.Code = STATUS_DATABASE_ERROR
-					resp.Msg = StatusText(STATUS_DATABASE_ERROR)
-					resp.Data = false
+					resp.Code = STATUS_OK
+					resp.Msg = StatusText(STATUS_OK)
+					resp.Data = true
 				}
-			} else {
-				resp.Code = STATUS_OK
-				resp.Msg = StatusText(STATUS_OK)
-				resp.Data = true
 			}
+		} else {
+			resp.Code = STATUS_METHOD_NOT_SUPPORT
+			resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
+			resp.Data = false
 		}
 	} else {
-		resp.Code = STATUS_METHOD_NOT_SUPPORT
-		resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
-		resp.Data = false
+		v, ok := err.(*bean.Err)
+		if ok {
+			if v.Code == bean.Err_Token_Appid_Is_Illegal {
+				resp.Code = STATUS_APP_ID_IS_ILLEGAL
+				resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Illegal {
+				resp.Code = STATUS_TOKEN_ILLEGAL
+				resp.Msg = StatusText(STATUS_TOKEN_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Expired {
+				resp.Code = STATUS_TOKEN_EXPIRES
+				resp.Msg = StatusText(STATUS_TOKEN_EXPIRES)
+				resp.Data = ""
+			}
+		} else {
+			resp.Code = STATUS_DATABASE_ERROR
+			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+			resp.Data = ""
+
+		}
 	}
-	err, result := resp.jsonString()
+
+	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
-	} else {
-		w.Write(resp.jsonError())
 	}
 
 }
@@ -302,35 +515,63 @@ func (httpServer *HttpServer) favoriteOperate(w http.ResponseWriter, r *http.Req
 http://localhost/favorite/list?userid=9  http://localhost/favorite/list?userid=112233
 */
 func (httpServer *HttpServer) favoriteList(w http.ResponseWriter, r *http.Request) {
-	params := r.URL.Query()
-	userid := params["userid"][0]
-	userIdInt,err:=strconv.Atoi(userid)
-	if err!=nil {
-		log.Fatal("strconv.Atoi(userid) error")
-	}
 	resp := new(Response)
-	isUserExits:=httpServer.dbManager.IsUserExits(userIdInt)
-	if isUserExits {
-		data, err := httpServer.dbManager.QueryFavoriteSongsByUserId(userid)
+	err := validate.CheckRequest(httpServer.dbManager, r)
+	if err == nil {
+		params := r.URL.Query()
+		userid := params["userid"][0]
+		userIdInt, err := strconv.Atoi(userid)
 		if err != nil {
+			log.Fatal("strconv.Atoi(userid) error")
+		}
+		isUserExits := httpServer.dbManager.IsUserExits(userIdInt)
+		if isUserExits {
+			favoriteSongList, err := httpServer.dbManager.QueryFavoriteSongsByUserId(userid)
+			if err != nil {
+				resp.Code = STATUS_DATABASE_ERROR
+				resp.Msg = StatusText(STATUS_DATABASE_ERROR)
+				resp.Data = false
+			} else {
+				resp.Code = STATUS_OK
+				resp.Msg = StatusText(STATUS_OK)
+				if favoriteSongList == nil {
+					resp.Data = ""
+				} else {
+					resp.Data = favoriteSongList
+				}
+			}
+		} else {
+			resp.Code = STATUS_ACCOUT_NOT_EXIT
+			resp.Msg = StatusText(STATUS_ACCOUT_NOT_EXIT)
+			resp.Data = false
+		}
+
+	} else {
+		v, ok := err.(*bean.Err)
+		if ok {
+			if v.Code == bean.Err_Token_Appid_Is_Illegal {
+				resp.Code = STATUS_APP_ID_IS_ILLEGAL
+				resp.Msg = StatusText(STATUS_APP_ID_IS_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Illegal {
+				resp.Code = STATUS_TOKEN_ILLEGAL
+				resp.Msg = StatusText(STATUS_TOKEN_ILLEGAL)
+				resp.Data = ""
+			} else if v.Code == bean.Err_Token_Is_Expired {
+				resp.Code = STATUS_TOKEN_EXPIRES
+				resp.Msg = StatusText(STATUS_TOKEN_EXPIRES)
+				resp.Data = ""
+			}
+		} else {
 			resp.Code = STATUS_DATABASE_ERROR
 			resp.Msg = StatusText(STATUS_DATABASE_ERROR)
-			resp.Data = false
-		} else {
-			resp.Code = STATUS_OK
-			resp.Msg = StatusText(STATUS_OK)
-			resp.Data = string(data)
+			resp.Data = ""
+
 		}
-	}else {
-		resp.Code = STATUS_ACCOUT_NOT_EXIT
-		resp.Msg = StatusText(STATUS_ACCOUT_NOT_EXIT)
-		resp.Data = false
 	}
 
-	err, result := resp.jsonString()
+	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
-	} else {
-		w.Write(resp.jsonError())
 	}
 }
