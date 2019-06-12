@@ -100,6 +100,8 @@ func (httpServer *HttpServer) createToken(w http.ResponseWriter, r *http.Request
 		resp.Msg = StatusText(STATUS_METHOD_NOT_SUPPORT)
 		resp.Data = false
 	}
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -149,7 +151,8 @@ func (httpServer *HttpServer) songList(w http.ResponseWriter, r *http.Request) {
 
 		}
 	}
-
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -206,7 +209,8 @@ func (httpServer *HttpServer) songsBySinger(w http.ResponseWriter, r *http.Reque
 
 		}
 	}
-
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -262,7 +266,8 @@ func (httpServer *HttpServer) songBySongName(w http.ResponseWriter, r *http.Requ
 
 		}
 	}
-
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -340,7 +345,8 @@ func (httpServer *HttpServer) register(w http.ResponseWriter, r *http.Request) {
 
 		}
 	}
-
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -420,7 +426,8 @@ func (httpServer *HttpServer) updateUserInfo(w http.ResponseWriter, r *http.Requ
 
 		}
 	}
-
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -502,7 +509,8 @@ func (httpServer *HttpServer) favoriteOperate(w http.ResponseWriter, r *http.Req
 
 		}
 	}
-
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -569,7 +577,8 @@ func (httpServer *HttpServer) favoriteList(w http.ResponseWriter, r *http.Reques
 
 		}
 	}
-
+	//记录日志
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)

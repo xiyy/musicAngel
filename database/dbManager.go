@@ -279,3 +279,17 @@ func (dbManager *DbManager) QueryToken(appid, token string) (error, *bean.Token)
 	log.Println(tokenValue.TokenValue, tokenValue.Expire)
 	return nil, &tokenValue
 }
+
+func (dbManager *DbManager) SaveRequestLog(log *bean.RequestLog) error {
+	tx, err := dbManager.Db.Begin()
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec("insert into requestlog (userid,uuid,ip,appid,service,token,postbody,requesttime,successful,respcode,respmsg) values (?,?,?,?,?,?,?,?,?,?,?)", log.UserId,
+		log.Uuid, log.Ip, log.Appid, log.Service, log.Token, log.PostBody, log.Time, log.Successful, log.RespCode, log.RespMsg)
+	if err != nil {
+		return err
+	}
+	tx.Commit()
+	return nil
+}
