@@ -1,7 +1,6 @@
 package bean
 
 import (
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,17 +21,13 @@ type RequestLog struct {
 	RespMsg    string
 }
 
-func NewRequestLog(request *http.Request, respCode int, respMsg string) *RequestLog {
+func NewRequestLog(request *http.Request, postBody []byte, respCode int, respMsg string) *RequestLog {
 	service := request.URL.Host + request.URL.Port() + request.URL.Path
 	appid := request.Header.Get("appid")
 	token := request.Header.Get("token")
-	var postBody string
-	if request.Method == "POST" {
-		bodyBytes, err := ioutil.ReadAll(request.Body)
-		if err == nil {
-			postBody = string(bodyBytes)
-		}
-		defer request.Body.Close()
+	var postBodyStr string
+	if postBody != nil {
+		postBodyStr = string(postBody)
 	}
 	ip := func() string {
 		clientIP := request.Header.Get("X-Forwarded-For")
@@ -58,5 +53,5 @@ func NewRequestLog(request *http.Request, respCode int, respMsg string) *Request
 		successful = 1
 	}
 	currentTimeStamp := strconv.FormatInt(time.Now().Unix(), 10)
-	return &RequestLog{UserId: userId, Uuid: uuid, Ip: ip, Appid: appid, Service: service, Token: token, PostBody: postBody, Time: currentTimeStamp, Successful: successful, RespCode: respCode, RespMsg: respMsg}
+	return &RequestLog{UserId: userId, Uuid: uuid, Ip: ip, Appid: appid, Service: service, Token: token, PostBody: postBodyStr, Time: currentTimeStamp, Successful: successful, RespCode: respCode, RespMsg: respMsg}
 }

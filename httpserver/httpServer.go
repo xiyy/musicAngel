@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	_ "github.com/go-sql-driver/mysql"
+	"io/ioutil"
 	"log"
 	"musicAngel/bean"
 	"musicAngel/config"
@@ -64,15 +65,18 @@ http://localhost/token/create
 */
 func (httpServer *HttpServer) createToken(w http.ResponseWriter, r *http.Request) {
 	resp := new(Response)
+	var postBodyBytes []byte
 	if r.Method == "POST" {
 		var appConfigParam bean.AppConfigParam
-		err := json.NewDecoder(r.Body).Decode(&appConfigParam)
+		postBodyBytes, _ = ioutil.ReadAll(r.Body)
+		defer r.Body.Close()
+		err := json.Unmarshal(postBodyBytes, &appConfigParam)
 		if err != nil {
 			resp.Code = STATUS_DATA_PARAM_ILLEGAL
 			resp.Msg = StatusText(STATUS_DATA_PARAM_ILLEGAL)
 			resp.Data = ""
 		}
-		defer r.Body.Close()
+
 		if appConfigParam.AppId == config.APP_ID && appConfigParam.AppSecret == config.APP_SECRETE {
 			//appId+当前时间戳+appSecrete+token有效时间（一个小时）
 			currentTimeStamp := time.Now().Unix()
@@ -101,7 +105,7 @@ func (httpServer *HttpServer) createToken(w http.ResponseWriter, r *http.Request
 		resp.Data = false
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, postBodyBytes, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -152,7 +156,7 @@ func (httpServer *HttpServer) songList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, nil, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -210,7 +214,7 @@ func (httpServer *HttpServer) songsBySinger(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, nil, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -267,7 +271,7 @@ func (httpServer *HttpServer) songBySongName(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, nil, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -283,13 +287,14 @@ http://localhost/user/register
 */
 func (httpServer *HttpServer) register(w http.ResponseWriter, r *http.Request) {
 	resp := new(Response)
+	var postBodyBytes []byte
 	err := validate.CheckRequest(httpServer.dbManager, r)
 	if err == nil {
 		if r.Method == "POST" {
 			var account bean.Account
-			err := json.NewDecoder(r.Body).Decode(&account)
+			postBodyBytes, _ = ioutil.ReadAll(r.Body)
 			defer r.Body.Close()
-
+			err := json.Unmarshal(postBodyBytes, &account)
 			if err != nil {
 				resp.Code = STATUS_JSON_DATA_ILLEGAL
 				resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
@@ -346,7 +351,7 @@ func (httpServer *HttpServer) register(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, postBodyBytes, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -361,12 +366,14 @@ http://localhost/user/update
 */
 func (httpServer *HttpServer) updateUserInfo(w http.ResponseWriter, r *http.Request) {
 	resp := new(Response)
+	var postBodyBytes []byte
 	err := validate.CheckRequest(httpServer.dbManager, r)
 	if err == nil {
 		if r.Method == "POST" {
 			var user bean.User
-			err := json.NewDecoder(r.Body).Decode(&user)
+			postBodyBytes, _ = ioutil.ReadAll(r.Body)
 			defer r.Body.Close()
+			err := json.Unmarshal(postBodyBytes, &user)
 			if err != nil {
 				resp.Code = STATUS_JSON_DATA_ILLEGAL
 				resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
@@ -427,7 +434,7 @@ func (httpServer *HttpServer) updateUserInfo(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, postBodyBytes, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -443,12 +450,14 @@ http://localhost/favorite/operate
 */
 func (httpServer *HttpServer) favoriteOperate(w http.ResponseWriter, r *http.Request) {
 	resp := new(Response)
+	var postBodyBytes []byte
 	err := validate.CheckRequest(httpServer.dbManager, r)
 	if err == nil {
 		if r.Method == "POST" {
 			var favoriteSongArray bean.FavoriteSongArray
-			err := json.NewDecoder(r.Body).Decode(&favoriteSongArray)
+			postBodyBytes, _ = ioutil.ReadAll(r.Body)
 			defer r.Body.Close()
+			err := json.Unmarshal(postBodyBytes, &favoriteSongArray)
 			if err != nil {
 				resp.Code = STATUS_JSON_DATA_ILLEGAL
 				resp.Msg = StatusText(STATUS_JSON_DATA_ILLEGAL)
@@ -510,7 +519,7 @@ func (httpServer *HttpServer) favoriteOperate(w http.ResponseWriter, r *http.Req
 		}
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, postBodyBytes, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
@@ -578,7 +587,7 @@ func (httpServer *HttpServer) favoriteList(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	//记录日志
-	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, resp.Code, resp.Msg))
+	httpServer.dbManager.SaveRequestLog(bean.NewRequestLog(r, nil, resp.Code, resp.Msg))
 	err, result := resp.ObjToBytes()
 	if err == nil {
 		w.Write(result)
